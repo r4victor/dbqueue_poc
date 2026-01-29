@@ -1,0 +1,16 @@
+[project]
+name = "dbqueue-poc"
+version = "0.1.0"
+description = "An example app that implements efficient background processing backed by Postgres or SQLite queues."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "uvicorn",
+    "fastapi",
+    "sqlalchemy[asyncio]",
+    "sqlalchemy_utils",
+    "alembic",
+    "asyncpg",
+    "aiosqlite",
+    "apscheduler",
+]
