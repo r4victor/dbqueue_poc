@@ -127,10 +127,18 @@ class RunWorker:
         async with get_session_ctx() as session:
             res = await session.execute(select(RunModel).where(RunModel.id == run_id))
             run_model = res.scalar_one()
-            # Do some work ...
-            await asyncio.sleep(10)
-            run_model.lock_expires_at = None
-            run_model.last_processed_at = get_current_datetime()
-            run_model.status = RunStatus.DONE
-            await session.commit()
+
+        # Do some work ...
+        await asyncio.sleep(10)
+
+        async with get_session_ctx() as session:
+            await session.execute(
+                update(RunModel)
+                .where(RunModel.id == run_id)
+                .values(
+                    lock_expires_at=None,
+                    last_processed_at=get_current_datetime(),
+                    status=RunStatus.DONE,
+                )
+            )
         logger.debug("Processed run %s", run_id)
