@@ -1,7 +1,5 @@
 import os
-
 from pathlib import Path
-
 
 STATE_DIR_PATH = Path(
     os.getenv(
@@ -21,3 +19,6 @@ ALEMBIC_MIGRATIONS_LOCATION = os.getenv(
     "DBQUEUE_ALEMBIC_MIGRATIONS_LOCATION",
     "dbqueue_poc:migrations",
 )
+
+ROOT_LOG_LEVEL = os.getenv("DBQUEUE_ROOT_LOG_LEVEL", "WARNING").upper()
+LOG_LEVEL = os.getenv("DBQUEUE_LOG_LEVEL", "INFO").upper()

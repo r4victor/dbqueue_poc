@@ -1,11 +1,18 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Response
+from fastapi import Depends, FastAPI, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from dbqueue_poc.db import get_db, migrate
-from dbqueue_poc.background import start_background_tasks
+from dbqueue_poc.background.pipeline_tasks import start_pipeline_tasks
+from dbqueue_poc.background.scheduled_tasks import start_scheduled_tasks
+from dbqueue_poc.db import get_db, get_session, migrate
+from dbqueue_poc.schemas import CreateRunRequest
+from dbqueue_poc.services import runs
+from dbqueue_poc.utils.logging import configure_logging, get_logger
+
+logger = get_logger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -18,11 +25,14 @@ def create_app() -> FastAPI:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging()
     await migrate()
-    scheduler = start_background_tasks()
+    scheduler = start_scheduled_tasks()
+    pipeline_manager = start_pipeline_tasks()
+    logger.info("dbqueue server running")
     yield
-    if scheduler is not None:
-        scheduler.shutdown()
+    pipeline_manager.shutdown()
+    scheduler.shutdown()
     await get_db().engine.dispose()
     # Let checked-out DB connections close as dispose() only closes checked-in connections
     await asyncio.sleep(3)
@@ -36,3 +46,10 @@ def register_routes(app: FastAPI, ui: bool = True):
     @app.get("/healthcheck")
     async def healthcheck():
         return JSONResponse(content={"status": "running"})
+
+    @app.post("/runs/create")
+    async def create_run(
+        body: CreateRunRequest,
+        session: AsyncSession = Depends(get_session),
+    ):
+        await runs.create_run(session=session, create_run_request=body)

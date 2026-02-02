@@ -1,13 +1,14 @@
 import enum
 import uuid
 from datetime import datetime, timezone
-from typing import Callable, Generic, List, Optional, TypeVar, Union
+from typing import Callable, Generic, List, Optional, TypeVar
 
 from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     MetaData,
     String,
     Text,
@@ -108,12 +109,19 @@ class RunModel(BaseModel):
     )
 
     name: Mapped[str] = mapped_column(String(100))
-    submitted_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
-    last_processed_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    submitted_at: Mapped[datetime] = mapped_column(
+        NaiveDateTime, default=get_current_datetime
+    )
+    last_processed_at: Mapped[datetime] = mapped_column(
+        NaiveDateTime, default=get_current_datetime
+    )
     status: Mapped[RunStatus] = mapped_column(EnumAsString(RunStatus, 100), index=True)
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    lock_expires_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime)
+
     run_spec: Mapped[str] = mapped_column(Text)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
 
     jobs: Mapped[List["JobModel"]] = relationship(back_populates="run")
 
@@ -133,7 +141,21 @@ class JobModel(BaseModel):
     run: Mapped["RunModel"] = relationship()
 
     name: Mapped[str] = mapped_column(String(100))
-    submitted_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
-    last_processed_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    submitted_at: Mapped[datetime] = mapped_column(
+        NaiveDateTime, default=get_current_datetime
+    )
+    last_processed_at: Mapped[datetime] = mapped_column(
+        NaiveDateTime, default=get_current_datetime
+    )
     status: Mapped[JobStatus] = mapped_column(EnumAsString(JobStatus, 100), index=True)
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class EventModel(BaseModel):
+    __tablename__ = "events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType(binary=False), primary_key=True)
+    message: Mapped[str] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(
+        NaiveDateTime, default=get_current_datetime, index=True
+    )

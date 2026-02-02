@@ -1,4 +1,7 @@
 from enum import Enum
+from typing import Optional
+
+from pydantic import BaseModel
 
 
 class RunStatus(str, Enum):
@@ -36,3 +39,7 @@ class JobStatus(str, Enum):
 
     def is_finished(self):
         return self in self.finished_statuses()
+
+
+class CreateRunRequest(BaseModel):
+    name: Optional[str] = None
