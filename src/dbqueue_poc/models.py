@@ -80,10 +80,7 @@ class EnumAsString(TypeDecorator, Generic[E]):
     def process_result_value(self, value: Optional[str], dialect) -> Optional[E]:
         if value is None:
             return None
-        if (
-            value not in self.enum_class.__members__
-            and self.fallback_deserializer is not None
-        ):
+        if value not in self.enum_class.__members__ and self.fallback_deserializer is not None:
             return self.fallback_deserializer(value)
         return self.enum_class[value]
 
@@ -109,9 +106,7 @@ class RunModel(BaseModel):
     )
 
     name: Mapped[str] = mapped_column(String(100))
-    submitted_at: Mapped[datetime] = mapped_column(
-        NaiveDateTime, default=get_current_datetime
-    )
+    submitted_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
     last_processed_at: Mapped[datetime] = mapped_column(
         NaiveDateTime, default=get_current_datetime
     )
@@ -119,6 +114,7 @@ class RunModel(BaseModel):
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     lock_expires_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime)
+    lock_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUIDType(binary=False))
 
     run_spec: Mapped[str] = mapped_column(Text)
     priority: Mapped[int] = mapped_column(Integer, default=0)
@@ -141,9 +137,7 @@ class JobModel(BaseModel):
     run: Mapped["RunModel"] = relationship()
 
     name: Mapped[str] = mapped_column(String(100))
-    submitted_at: Mapped[datetime] = mapped_column(
-        NaiveDateTime, default=get_current_datetime
-    )
+    submitted_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
     last_processed_at: Mapped[datetime] = mapped_column(
         NaiveDateTime, default=get_current_datetime
     )

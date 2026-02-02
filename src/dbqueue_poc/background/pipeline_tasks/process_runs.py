@@ -4,6 +4,7 @@ import uuid
 from datetime import timedelta
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.orm import load_only
 
 from dbqueue_poc.db import get_db, get_session_ctx
 from dbqueue_poc.models import RunModel
@@ -83,12 +84,12 @@ class RunFetcher:
             for item in items:
                 self._queue.put_nowait(item)  # should never raise
 
-    async def fetch(self, limit: int) -> list[uuid.UUID]:
+    async def fetch(self, limit: int) -> list[RunModel]:
         run_lock, _ = get_locker(get_db().dialect_name).get_lockset(RunModel.__tablename__)
         async with get_session_ctx() as session:
             async with run_lock:
                 res = await session.execute(
-                    select(RunModel.id)
+                    select(RunModel)
                     .where(
                         RunModel.status.not_in(RunStatus.finished_statuses()),
                         or_(
@@ -99,15 +100,16 @@ class RunFetcher:
                     .order_by(RunModel.priority.desc(), RunModel.last_processed_at.asc())
                     .limit(limit)
                     .with_for_update(skip_locked=True, key_share=True)
+                    .options(load_only(RunModel.id))
                 )
-                run_ids = list(res.scalars().all())
-                await session.execute(
-                    update(RunModel)
-                    .where(RunModel.id.in_(run_ids))
-                    .values(lock_expires_at=get_current_datetime() + self._lock_timeout)
-                )
+                run_models = list(res.scalars().all())
+                lock_expires_at = get_current_datetime() + self._lock_timeout
+                lock_token = uuid.uuid4()
+                for run_model in run_models:
+                    run_model.lock_expires_at = lock_expires_at
+                    run_model.lock_token = lock_token
                 await session.commit()
-        return run_ids
+        return run_models
 
 
 class RunWorker:
@@ -122,23 +124,43 @@ class RunWorker:
             item = await self._queue.get()
             await self.process(item)
 
-    async def process(self, run_id: uuid.UUID):
-        logger.debug("Processing run %s", run_id)
+    async def process(self, item: RunModel):
+        logger.debug("Processing run %s", item.id)
         async with get_session_ctx() as session:
-            res = await session.execute(select(RunModel).where(RunModel.id == run_id))
-            run_model = res.scalar_one()
+            res = await session.execute(
+                select(RunModel).where(
+                    RunModel.id == item.id,
+                    RunModel.lock_token == item.lock_token,
+                )
+            )
+            run_model = res.scalar_one_or_none()
+            if run_model is None:
+                logger.warning(
+                    "Failed to process run: lock_token mismatch."
+                    " The run is expected to be processed and updated by another worker."
+                )
+                return
 
         # Do some work ...
-        await asyncio.sleep(10)
+        await asyncio.sleep(30)
 
         async with get_session_ctx() as session:
-            await session.execute(
+            res = await session.execute(
                 update(RunModel)
-                .where(RunModel.id == run_id)
+                .where(
+                    RunModel.id == run_model.id,
+                    RunModel.lock_token == run_model.lock_token,
+                )
                 .values(
                     lock_expires_at=None,
                     last_processed_at=get_current_datetime(),
                     status=RunStatus.DONE,
                 )
             )
-        logger.debug("Processed run %s", run_id)
+            if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
+                logger.warning(
+                    "Failed to update the run after processing: lock_token updated."
+                    " The run is expected to be processed and updated by another worker."
+                )
+                return
+        logger.debug("Processed run %s", run_model.id)
