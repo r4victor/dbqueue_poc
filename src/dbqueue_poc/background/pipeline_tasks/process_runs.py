@@ -203,7 +203,7 @@ class RunFetcher:
                         ),
                         or_(
                             RunModel.lock_owner.is_(None),
-                            RunModel.lock_owner == self.__class__.__name__,
+                            RunModel.lock_owner == RunPipeline.__name__,
                         ),
                     )
                     .order_by(RunModel.priority.desc(), RunModel.last_processed_at.asc())
@@ -217,7 +217,7 @@ class RunFetcher:
                 for run_model in run_models:
                     run_model.lock_expires_at = lock_expires_at
                     run_model.lock_token = lock_token
-                    run_model.lock_owner = self.__class__.__name__
+                    run_model.lock_owner = RunPipeline.__name__
                 await session.commit()
         return [cast(PipelineItem, r) for r in run_models]
 
@@ -290,7 +290,7 @@ class RunWorker:
                     ),
                     or_(
                         JobModel.lock_owner.is_(None),
-                        JobModel.lock_owner == self.__class__.__name__,
+                        JobModel.lock_owner == RunPipeline.__name__,
                     ),
                 )
                 .with_for_update(skip_locked=True, key_share=True)
@@ -305,8 +305,8 @@ class RunWorker:
 
             for job_model in locked_job_models:
                 job_model.lock_expires_at = run_model.lock_expires_at
-                run_model.lock_token = run_model.lock_token
-                run_model.lock_owner = self.__class__.__name__
+                job_model.lock_token = run_model.lock_token
+                job_model.lock_owner = RunPipeline.__name__
             await session.commit()
 
         # Do some work ...

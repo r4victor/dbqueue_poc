@@ -204,7 +204,7 @@ class JobFetcher:
                         ),
                         or_(
                             JobModel.lock_owner.is_(None),
-                            JobModel.lock_owner == self.__class__.__name__,
+                            JobModel.lock_owner == JobPipeline.__name__,
                         ),
                         # Do not try to lock jobs if the run is being locked so that
                         # the run pipeline is guaranteed to lock all the jobs eventually.
@@ -224,7 +224,7 @@ class JobFetcher:
                 for job_model in job_models:
                     job_model.lock_expires_at = lock_expires_at
                     job_model.lock_token = lock_token
-                    job_model.lock_owner = self.__class__.__name__
+                    job_model.lock_owner = JobPipeline.__name__
                 await session.commit()
         return [cast(PipelineItem, r) for r in job_models]
 
