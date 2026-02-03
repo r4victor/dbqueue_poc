@@ -2,13 +2,13 @@ import asyncio
 import math
 import random
 import uuid
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Protocol, cast
+from datetime import timedelta
+from typing import cast
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import load_only
 
+from dbqueue_poc.background.pipeline_tasks.base import PipelineItem, ProcessingResult
 from dbqueue_poc.db import get_db, get_session_ctx
 from dbqueue_poc.models import JobModel, RunModel
 from dbqueue_poc.schemas import JobStatus
@@ -17,17 +17,6 @@ from dbqueue_poc.utils.common import get_current_datetime
 from dbqueue_poc.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-class PipelineItem(Protocol):
-    id: uuid.UUID
-    lock_expires_at: datetime
-    lock_token: uuid.UUID
-
-
-@dataclass
-class ProcessingResult:
-    requeue: bool
 
 
 class JobPipeline:
@@ -151,7 +140,7 @@ class JobHeartbeater:
 
 
 class JobFetcher:
-    FETCH_DELAYS = [0.5, 1, 2, 5]
+    _FETCH_DELAYS = [0.5, 1, 2, 5]
 
     def __init__(
         self,
@@ -240,7 +229,7 @@ class JobFetcher:
         return [cast(PipelineItem, r) for r in job_models]
 
     def _next_fetch_delay(self, empty_fetch_count: int) -> float:
-        next_delay = self.FETCH_DELAYS[min(empty_fetch_count, len(self.FETCH_DELAYS) - 1)]
+        next_delay = self._FETCH_DELAYS[min(empty_fetch_count, len(self._FETCH_DELAYS) - 1)]
         jitter = random.random() * 0.4 - 0.2
         return next_delay * (1 + jitter)
 
