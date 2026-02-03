@@ -115,6 +115,7 @@ class RunModel(BaseModel):
 
     lock_expires_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime)
     lock_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUIDType(binary=False))
+    lock_owner: Mapped[Optional[str]] = mapped_column(String(100))
 
     run_spec: Mapped[str] = mapped_column(Text)
     priority: Mapped[int] = mapped_column(Integer, default=0)
@@ -143,6 +144,12 @@ class JobModel(BaseModel):
     )
     status: Mapped[JobStatus] = mapped_column(EnumAsString(JobStatus, 100), index=True)
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    lock_expires_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime)
+    lock_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUIDType(binary=False))
+    lock_owner: Mapped[Optional[str]] = mapped_column(String(100))
+
+    priority: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class EventModel(BaseModel):
