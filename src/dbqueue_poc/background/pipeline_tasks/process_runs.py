@@ -110,7 +110,6 @@ class RunHeartbeater:
                 )
                 await self.untrack(item)
             elif item.lock_expires_at < now + self._hearbeat_margin:
-                item.lock_expires_at = now + self._lock_timeout
                 updated_items.append(item)
         if len(updated_items) == 0:
             return
@@ -130,6 +129,9 @@ class RunHeartbeater:
                     "Failed to update lock_expires_at: lock_token changed."
                     " The run is expected to be processed and updated on another fetch iteration."
                 )
+                return
+        for item in updated_items:
+            item.lock_expires_at = now + self._lock_timeout
 
     async def track(self, item: PipelineItem):
         self._items[item.id] = item
