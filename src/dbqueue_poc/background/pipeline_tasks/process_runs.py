@@ -1,7 +1,8 @@
 import asyncio
 import math
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Protocol, cast
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import load_only
@@ -16,36 +17,46 @@ from dbqueue_poc.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+class PipelineItem(Protocol):
+    id: uuid.UUID
+    lock_expires_at: datetime
+    lock_token: uuid.UUID
+
+
 class RunPipeline:
     def __init__(
         self,
         workers_num: int = 25,
         queue_lower_limit_factor: float = 0.5,
         queue_upper_limit_factor: float = 2.0,
+        min_processing_interval: timedelta = timedelta(seconds=5),
         lock_timeout: timedelta = timedelta(seconds=20),
-        heartbeat_margin: timedelta = timedelta(seconds=10),
+        heartbeat_trigger: timedelta = timedelta(seconds=10),
     ) -> None:
         self._workers_num = workers_num
         self._queue_lower_limit_factor = queue_lower_limit_factor
         self._queue_upper_limit_factor = queue_upper_limit_factor
         self._queue_desired_minsize = math.ceil(workers_num * queue_lower_limit_factor)
         self._queue_maxsize = math.ceil(workers_num * queue_upper_limit_factor)
+        self._min_processing_interval = min_processing_interval
         self._lock_timeout = lock_timeout
-        self._heartbeat_margin = heartbeat_margin
-        self._queue = asyncio.Queue(maxsize=self._queue_maxsize)
+        self._heartbeat_trigger = heartbeat_trigger
+        self._queue = asyncio.Queue[PipelineItem](maxsize=self._queue_maxsize)
         self._heartbeater = RunHeartbeater(
             lock_timeout=self._lock_timeout,
-            heartbeat_margin=self._heartbeat_margin,
+            heartbeat_trigger=self._heartbeat_trigger,
         )
         self._fetcher = RunFetcher(
             queue=self._queue,
             queue_desired_minsize=self._queue_desired_minsize,
             queue_maxsize=self._queue_maxsize,
+            min_processing_interval=self._min_processing_interval,
             lock_timeout=self._lock_timeout,
             heartbeater=self._heartbeater,
         )
         self._workers = [
-            RunWorker(queue=self._queue, heartbeater=self._heartbeater) for _ in range(workers_num)
+            RunWorker(queue=self._queue, heartbeater=self._heartbeater)
+            for _ in range(self._workers_num)
         ]
 
     def start(self):
@@ -59,62 +70,62 @@ class RunHeartbeater:
     def __init__(
         self,
         lock_timeout: timedelta,
-        heartbeat_margin: timedelta,
+        heartbeat_trigger: timedelta,
     ) -> None:
         self._lock_timeout = lock_timeout
-        self._hearbeat_margin = heartbeat_margin
-        self._items: dict[uuid.UUID, RunModel] = {}
+        self._hearbeat_margin = heartbeat_trigger
+        self._items: dict[uuid.UUID, PipelineItem] = {}
         self._untrack_lock = asyncio.Lock()
 
     async def start(self):
         while True:
-            await self.heartbeat()
+            try:
+                await self.heartbeat()
+            except Exception:
+                logger.exception("Unexpected exception when running heartbeat")
             await asyncio.sleep(1)
 
     async def heartbeat(self):
-        models_to_update = []
+        updated_items = []
         now = get_current_datetime()
-        run_models = list(self._items.values())
-        for run_model in run_models:
-            assert run_model.lock_expires_at is not None
-            if run_model.lock_expires_at < now + self._hearbeat_margin:
-                run_model.lock_expires_at = now + self._lock_timeout
-                models_to_update.append(run_model)
-            if run_model.lock_expires_at < now:
+        items = list(self._items.values())
+        for item in items:
+            if item.lock_expires_at < now + self._hearbeat_margin:
+                item.lock_expires_at = now + self._lock_timeout
+                updated_items.append(item)
+            elif item.lock_expires_at < now:
                 logger.warning(
                     "Failed to heartbeat run %s in time."
                     " The run is expected to be processed on another fetch iteration.",
-                    run_model.id,
+                    item.id,
                 )
-                await self.untrack(run_model)
-        if len(models_to_update) == 0:
+                await self.untrack(item)
+        if len(updated_items) == 0:
             return
-        logger.debug(
-            "Updating lock expiration for runs: %s", [str(r.id) for r in models_to_update]
-        )
-        runs_to_update_filters = [
-            and_(RunModel.id == run_model.id, RunModel.lock_token == run_model.lock_token)
-            for run_model in models_to_update
-        ]
+        logger.debug("Updating lock_expires_at for runs: %s", [str(r.id) for r in updated_items])
         async with get_session_ctx() as session:
+            per_item_filters = [
+                and_(RunModel.id == item.id, RunModel.lock_token == item.lock_token)
+                for item in updated_items
+            ]
             res = await session.execute(
                 update(RunModel)
-                .where(or_(*runs_to_update_filters))
+                .where(or_(*per_item_filters))
                 .values(lock_expires_at=now + self._lock_timeout)
             )
             if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
                 logger.warning(
-                    "Failed to update lock expiration: lock_token changed."
-                    " The run is expected to be processed and updated by another worker."
+                    "Failed to update lock_expires_at: lock_token changed."
+                    " The run is expected to be processed and updated on another fetch iteration."
                 )
 
-    async def track(self, item: RunModel):
+    async def track(self, item: PipelineItem):
         self._items[item.id] = item
 
-    async def untrack(self, item: RunModel):
+    async def untrack(self, item: PipelineItem):
         async with self._untrack_lock:
             tracked = self._items.get(item.id)
-            # Prevent iteration with expired lock to unlock item processed by new iteration.
+            # Prevent expired fetch iteration to unlock item processed by new iteration.
             if tracked is not None and tracked.lock_token == item.lock_token:
                 del self._items[item.id]
 
@@ -122,15 +133,17 @@ class RunHeartbeater:
 class RunFetcher:
     def __init__(
         self,
-        queue: asyncio.Queue,
+        queue: asyncio.Queue[PipelineItem],
         queue_desired_minsize: int,
         queue_maxsize: int,
+        min_processing_interval: timedelta,
         lock_timeout: timedelta,
         heartbeater: RunHeartbeater,
     ) -> None:
         self._queue = queue
         self._queue_desired_minsize = queue_desired_minsize
         self._queue_maxsize = queue_maxsize
+        self._min_processing_interval = min_processing_interval
         self._lock_timeout = lock_timeout
         self._heartbeater = heartbeater
 
@@ -140,7 +153,12 @@ class RunFetcher:
                 await asyncio.sleep(1)
                 continue
             fetch_limit = self._queue_maxsize - self._queue.qsize()
-            items = await self.fetch(limit=fetch_limit)
+            try:
+                items = await self.fetch(limit=fetch_limit)
+            except Exception:
+                logger.exception("Unexpected exception when fetching new items")
+                await asyncio.sleep(1)
+                continue
             if len(items) == 0:
                 await asyncio.sleep(1)
                 continue
@@ -148,17 +166,19 @@ class RunFetcher:
                 self._queue.put_nowait(item)  # should never raise
                 await self._heartbeater.track(item)
 
-    async def fetch(self, limit: int) -> list[RunModel]:
+    async def fetch(self, limit: int) -> list[PipelineItem]:
         run_lock, _ = get_locker(get_db().dialect_name).get_lockset(RunModel.__tablename__)
         async with get_session_ctx() as session:
             async with run_lock:
+                now = get_current_datetime()
                 res = await session.execute(
                     select(RunModel)
                     .where(
                         RunModel.status.not_in(RunStatus.finished_statuses()),
+                        RunModel.last_processed_at <= now - self._min_processing_interval,
                         or_(
                             RunModel.lock_expires_at.is_(None),
-                            RunModel.lock_expires_at < get_current_datetime(),
+                            RunModel.lock_expires_at < now,
                         ),
                     )
                     .order_by(RunModel.priority.desc(), RunModel.last_processed_at.asc())
@@ -173,13 +193,13 @@ class RunFetcher:
                     run_model.lock_expires_at = lock_expires_at
                     run_model.lock_token = lock_token
                 await session.commit()
-        return run_models
+        return [cast(PipelineItem, r) for r in run_models]
 
 
 class RunWorker:
     def __init__(
         self,
-        queue: asyncio.Queue,
+        queue: asyncio.Queue[PipelineItem],
         heartbeater: RunHeartbeater,
     ) -> None:
         self._queue = queue
@@ -188,10 +208,13 @@ class RunWorker:
     async def start(self):
         while True:
             item = await self._queue.get()
-            await self.process(item)
+            try:
+                await self.process(item)
+            except Exception:
+                logger.exception("Unexpected exception when processing item")
             await self._heartbeater.untrack(item)
 
-    async def process(self, item: RunModel):
+    async def process(self, item: PipelineItem):
         logger.debug("Processing run %s", item.id)
         async with get_session_ctx() as session:
             res = await session.execute(
@@ -204,7 +227,7 @@ class RunWorker:
             if run_model is None:
                 logger.warning(
                     "Failed to process run: lock_token mismatch."
-                    " The run is expected to be processed and updated by another worker."
+                    " The run is expected to be processed and updated on another fetch iteration."
                 )
                 return
 
@@ -227,7 +250,7 @@ class RunWorker:
             if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
                 logger.warning(
                     "Failed to update the run after processing: lock_token changed."
-                    " The run is expected to be processed and updated by another worker."
+                    " The run is expected to be processed and updated on another fetch iteration."
                 )
                 return
-        logger.debug("Processed run %s", run_model.id)
+        logger.debug("Processed run %s", item.id)
