@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dbqueue_poc.background.pipeline_tasks import start_pipeline_tasks
 from dbqueue_poc.background.scheduled_tasks import start_scheduled_tasks
 from dbqueue_poc.db import get_db, get_session, migrate
-from dbqueue_poc.schemas import CreateRunRequest
-from dbqueue_poc.services import runs
+from dbqueue_poc.schemas import CreateJobRequest, CreateRunRequest
+from dbqueue_poc.services import jobs, runs
 from dbqueue_poc.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -53,3 +53,10 @@ def register_routes(app: FastAPI, ui: bool = True):
         session: AsyncSession = Depends(get_session),
     ):
         await runs.create_run(session=session, create_run_request=body)
+
+    @app.post("/jobs/create")
+    async def create_job(
+        body: CreateJobRequest,
+        session: AsyncSession = Depends(get_session),
+    ):
+        await jobs.create_job(session=session, create_job_request=body)

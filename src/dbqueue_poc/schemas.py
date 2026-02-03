@@ -1,3 +1,4 @@
+import uuid
 from enum import Enum
 from typing import Optional
 
@@ -42,4 +43,9 @@ class JobStatus(str, Enum):
 
 
 class CreateRunRequest(BaseModel):
+    name: Optional[str] = None
+
+
+class CreateJobRequest(BaseModel):
+    run_id: uuid.UUID
     name: Optional[str] = None
