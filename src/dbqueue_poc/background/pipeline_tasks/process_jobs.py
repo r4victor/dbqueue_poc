@@ -213,10 +213,16 @@ class JobFetcher:
                             JobModel.lock_expires_at.is_(None),
                             JobModel.lock_expires_at < now,
                         ),
-                        JobModel.lock_owner.in_([None, self.__class__.__name__]),
+                        or_(
+                            JobModel.lock_owner.is_(None),
+                            JobModel.lock_owner == self.__class__.__name__,
+                        ),
                         # Do not try to lock jobs if the run is being locked so that
                         # the run pipeline is guaranteed to lock all the jobs eventually.
-                        RunModel.lock_expires_at.is_(None),
+                        or_(
+                            RunModel.lock_expires_at.is_(None),
+                            RunModel.lock_expires_at < now,
+                        ),
                     )
                     .order_by(JobModel.priority.desc(), JobModel.last_processed_at.asc())
                     .limit(limit)

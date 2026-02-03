@@ -212,7 +212,10 @@ class RunFetcher:
                             RunModel.lock_expires_at.is_(None),
                             RunModel.lock_expires_at < now,
                         ),
-                        RunModel.lock_owner.in_([None, self.__class__.__name__]),
+                        or_(
+                            RunModel.lock_owner.is_(None),
+                            RunModel.lock_owner == self.__class__.__name__,
+                        ),
                     )
                     .order_by(RunModel.priority.desc(), RunModel.last_processed_at.asc())
                     .limit(limit)
