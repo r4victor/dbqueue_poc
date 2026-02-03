@@ -65,25 +65,36 @@ class RunPipeline:
             asyncio.create_task(worker.start())
         asyncio.create_task(self._fetcher.start())
 
+    def shutdown(self):
+        self._fetcher.shutdown()
+        self._heartbeater.shutdown()
+
 
 class RunHeartbeater:
     def __init__(
         self,
         lock_timeout: timedelta,
         heartbeat_trigger: timedelta,
+        heartbeat_delay: float = 1.0,
     ) -> None:
         self._lock_timeout = lock_timeout
         self._hearbeat_margin = heartbeat_trigger
         self._items: dict[uuid.UUID, PipelineItem] = {}
         self._untrack_lock = asyncio.Lock()
+        self._heartbeat_delay = heartbeat_delay
+        self._running = False
 
     async def start(self):
-        while True:
+        self._running = True
+        while self._running:
             try:
                 await self.heartbeat()
             except Exception:
                 logger.exception("Unexpected exception when running heartbeat")
-            await asyncio.sleep(1)
+            await asyncio.sleep(self._heartbeat_delay)
+
+    def shutdown(self):
+        self._running = False
 
     async def heartbeat(self):
         updated_items = []
@@ -131,6 +142,8 @@ class RunHeartbeater:
 
 
 class RunFetcher:
+    FETCH_DELAYS = [0.5, 1, 2, 5]
+
     def __init__(
         self,
         queue: asyncio.Queue[PipelineItem],
@@ -139,6 +152,7 @@ class RunFetcher:
         min_processing_interval: timedelta,
         lock_timeout: timedelta,
         heartbeater: RunHeartbeater,
+        queue_check_delay: float = 1.0,
     ) -> None:
         self._queue = queue
         self._queue_desired_minsize = queue_desired_minsize
@@ -146,25 +160,32 @@ class RunFetcher:
         self._min_processing_interval = min_processing_interval
         self._lock_timeout = lock_timeout
         self._heartbeater = heartbeater
+        self._queue_check_delay = queue_check_delay
+        self._running = False
 
     async def start(self):
-        while True:
+        self._running = True
+        empty_fetch_count = 0
+        while self._running:
             if self._queue.qsize() >= self._queue_desired_minsize:
-                await asyncio.sleep(1)
+                await asyncio.sleep(self._queue_check_delay)
                 continue
             fetch_limit = self._queue_maxsize - self._queue.qsize()
             try:
                 items = await self.fetch(limit=fetch_limit)
             except Exception:
                 logger.exception("Unexpected exception when fetching new items")
-                await asyncio.sleep(1)
-                continue
+                items = []
             if len(items) == 0:
-                await asyncio.sleep(1)
+                await asyncio.sleep(self._next_fetch_delay(empty_fetch_count))
+                empty_fetch_count += 1
                 continue
             for item in items:
                 self._queue.put_nowait(item)  # should never raise
                 await self._heartbeater.track(item)
+
+    def shutdown(self):
+        self._running = False
 
     async def fetch(self, limit: int) -> list[PipelineItem]:
         run_lock, _ = get_locker(get_db().dialect_name).get_lockset(RunModel.__tablename__)
@@ -194,6 +215,9 @@ class RunFetcher:
                     run_model.lock_token = lock_token
                 await session.commit()
         return [cast(PipelineItem, r) for r in run_models]
+
+    def _next_fetch_delay(self, empty_fetch_count: int) -> float:
+        return self.FETCH_DELAYS[min(empty_fetch_count, len(self.FETCH_DELAYS) - 1)]
 
 
 class RunWorker:
