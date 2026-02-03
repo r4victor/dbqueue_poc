@@ -299,7 +299,10 @@ class RunWorker:
                         JobModel.lock_expires_at.is_(None),
                         JobModel.lock_expires_at < get_current_datetime(),
                     ),
-                    JobModel.lock_owner.in_([None, self.__class__.__name__]),
+                    or_(
+                        JobModel.lock_owner.is_(None),
+                        JobModel.lock_owner == self.__class__.__name__,
+                    ),
                 )
                 .with_for_update(skip_locked=True, key_share=True)
             )
