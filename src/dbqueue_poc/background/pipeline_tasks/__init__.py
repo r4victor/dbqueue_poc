@@ -10,7 +10,8 @@ class PipelineManager:
             pipeline.start()
 
     def shutdown(self):
-        pass
+        for pipeline in self._pipelines:
+            pipeline.shutdown()
 
 
 def start_pipeline_tasks() -> PipelineManager:

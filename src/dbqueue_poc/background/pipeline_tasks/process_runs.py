@@ -1,5 +1,6 @@
 import asyncio
 import math
+import random
 import uuid
 from datetime import datetime, timedelta
 from typing import Protocol, cast
@@ -101,16 +102,16 @@ class RunHeartbeater:
         now = get_current_datetime()
         items = list(self._items.values())
         for item in items:
-            if item.lock_expires_at < now + self._hearbeat_margin:
-                item.lock_expires_at = now + self._lock_timeout
-                updated_items.append(item)
-            elif item.lock_expires_at < now:
+            if item.lock_expires_at < now:
                 logger.warning(
                     "Failed to heartbeat run %s in time."
                     " The run is expected to be processed on another fetch iteration.",
                     item.id,
                 )
                 await self.untrack(item)
+            elif item.lock_expires_at < now + self._hearbeat_margin:
+                item.lock_expires_at = now + self._lock_timeout
+                updated_items.append(item)
         if len(updated_items) == 0:
             return
         logger.debug("Updating lock_expires_at for runs: %s", [str(r.id) for r in updated_items])
@@ -180,6 +181,8 @@ class RunFetcher:
                 await asyncio.sleep(self._next_fetch_delay(empty_fetch_count))
                 empty_fetch_count += 1
                 continue
+            else:
+                empty_fetch_count = 0
             for item in items:
                 self._queue.put_nowait(item)  # should never raise
                 await self._heartbeater.track(item)
@@ -217,7 +220,9 @@ class RunFetcher:
         return [cast(PipelineItem, r) for r in run_models]
 
     def _next_fetch_delay(self, empty_fetch_count: int) -> float:
-        return self.FETCH_DELAYS[min(empty_fetch_count, len(self.FETCH_DELAYS) - 1)]
+        next_delay = self.FETCH_DELAYS[min(empty_fetch_count, len(self.FETCH_DELAYS) - 1)]
+        jitter = random.random() * 0.4 - 0.2
+        return next_delay * (1 + jitter)
 
 
 class RunWorker:

@@ -33,6 +33,7 @@ class Database:
             bind=self.engine,  # type: ignore[assignment]
             expire_on_commit=False,
             class_=AsyncSession,
+            autoflush=False,
         )
 
         if self.dialect_name == "sqlite":
