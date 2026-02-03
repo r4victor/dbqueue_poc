@@ -204,6 +204,7 @@ class JobFetcher:
                             JobModel.lock_expires_at.is_(None),
                             JobModel.lock_expires_at < now,
                         ),
+                        JobModel.lock_owner.in_([None, self.__class__.__name__]),
                     )
                     .order_by(JobModel.priority.desc(), JobModel.last_processed_at.asc())
                     .limit(limit)
@@ -216,6 +217,7 @@ class JobFetcher:
                 for job_model in job_models:
                     job_model.lock_expires_at = lock_expires_at
                     job_model.lock_token = lock_token
+                    job_model.lock_owner = self.__class__.__name__
                 await session.commit()
         return [cast(PipelineItem, r) for r in job_models]
 
@@ -272,6 +274,8 @@ class JobWorker:
                 )
                 .values(
                     lock_expires_at=None,
+                    lock_token=None,
+                    lock_owner=None,
                     last_processed_at=get_current_datetime(),
                     status=JobStatus.DONE,
                 )

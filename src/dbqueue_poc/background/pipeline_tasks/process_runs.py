@@ -206,6 +206,7 @@ class RunFetcher:
                             RunModel.lock_expires_at.is_(None),
                             RunModel.lock_expires_at < now,
                         ),
+                        RunModel.lock_owner.in_([None, self.__class__.__name__]),
                     )
                     .order_by(RunModel.priority.desc(), RunModel.last_processed_at.asc())
                     .limit(limit)
@@ -218,6 +219,7 @@ class RunFetcher:
                 for run_model in run_models:
                     run_model.lock_expires_at = lock_expires_at
                     run_model.lock_token = lock_token
+                    run_model.lock_owner = self.__class__.__name__
                 await session.commit()
         return [cast(PipelineItem, r) for r in run_models]
 
@@ -274,6 +276,8 @@ class RunWorker:
                 )
                 .values(
                     lock_expires_at=None,
+                    lock_token=None,
+                    lock_owner=None,
                     last_processed_at=get_current_datetime(),
                     status=RunStatus.DONE,
                 )
