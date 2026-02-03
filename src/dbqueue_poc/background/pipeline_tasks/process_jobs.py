@@ -2,6 +2,7 @@ import asyncio
 import math
 import random
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol, cast
 
@@ -22,6 +23,11 @@ class PipelineItem(Protocol):
     id: uuid.UUID
     lock_expires_at: datetime
     lock_token: uuid.UUID
+
+
+@dataclass
+class ProcessingResult:
+    requeue: bool
 
 
 class JobPipeline:
@@ -110,7 +116,6 @@ class JobHeartbeater:
                 )
                 await self.untrack(item)
             elif item.lock_expires_at < now + self._hearbeat_margin:
-                item.lock_expires_at = now + self._lock_timeout
                 updated_items.append(item)
         if len(updated_items) == 0:
             return
@@ -130,6 +135,9 @@ class JobHeartbeater:
                     "Failed to update lock_expires_at: lock_token changed."
                     " The job is expected to be processed and updated on another fetch iteration."
                 )
+                return
+        for item in updated_items:
+            item.lock_expires_at = now + self._lock_timeout
 
     async def track(self, item: PipelineItem):
         self._items[item.id] = item
@@ -239,13 +247,20 @@ class JobWorker:
     async def start(self):
         while True:
             item = await self._queue.get()
+            requeue = False
             try:
-                await self.process(item)
+                processing_result = await self.process(item)
+                requeue = processing_result.requeue
             except Exception:
                 logger.exception("Unexpected exception when processing item")
-            await self._heartbeater.untrack(item)
+            if requeue:
+                # Requeue mechanism allows workers to process the item later while keeping it locked,
+                # e.g. to wait for related resources to be unlocked.
+                await self._queue.put(item)
+            else:
+                await self._heartbeater.untrack(item)
 
-    async def process(self, item: PipelineItem):
+    async def process(self, item: PipelineItem) -> ProcessingResult:
         logger.debug("Processing job %s", item.id)
         async with get_session_ctx() as session:
             res = await session.execute(
@@ -260,7 +275,7 @@ class JobWorker:
                     "Failed to process job: lock_token mismatch."
                     " The job is expected to be processed and updated on another fetch iteration."
                 )
-                return
+                return ProcessingResult(requeue=False)
 
         # Do some work ...
         await asyncio.sleep(30)
@@ -285,5 +300,6 @@ class JobWorker:
                     "Failed to update the job after processing: lock_token changed."
                     " The job is expected to be processed and updated on another fetch iteration."
                 )
-                return
+                return ProcessingResult(requeue=False)
         logger.debug("Processed job %s", item.id)
+        return ProcessingResult(requeue=False)
