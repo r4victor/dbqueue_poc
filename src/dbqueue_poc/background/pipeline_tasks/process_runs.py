@@ -263,6 +263,10 @@ class RunWorker:
     async def process(self, item: PipelineItem) -> ProcessingResult:
         logger.debug("Processing run %s", item.id)
         async with get_session_ctx() as session:
+            # This is an example of how a pipeline can lock related resources.
+            # The worker either successfully locks all the related resources or requeues the main resource.
+            # While the main resource is locked, related resources cannot be locked by their pipelines.
+            # This guarantees that the pipeline processing the main resource can acquire all locks eventually.
             res = await session.execute(
                 select(RunModel)
                 .where(
@@ -294,7 +298,7 @@ class RunWorker:
                     ),
                     JobModel.lock_owner.in_([None, self.__class__.__name__]),
                 )
-                .with_for_update(key_share=True)
+                .with_for_update(skip_locked=True, key_share=True)
             )
             locked_job_models = res.scalars().all()
             if len(run_model.jobs) != len(locked_job_models):
@@ -303,6 +307,7 @@ class RunWorker:
                     run_model.id,
                 )
                 return ProcessingResult(requeue=True)
+
             for job_model in locked_job_models:
                 job_model.lock_expires_at = run_model.lock_expires_at
                 run_model.lock_token = run_model.lock_token

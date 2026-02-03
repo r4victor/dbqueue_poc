@@ -10,7 +10,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import load_only
 
 from dbqueue_poc.db import get_db, get_session_ctx
-from dbqueue_poc.models import JobModel
+from dbqueue_poc.models import JobModel, RunModel
 from dbqueue_poc.schemas import JobStatus
 from dbqueue_poc.services.locking import get_locker
 from dbqueue_poc.utils.common import get_current_datetime
@@ -205,6 +205,7 @@ class JobFetcher:
                 now = get_current_datetime()
                 res = await session.execute(
                     select(JobModel)
+                    .join(JobModel.run)
                     .where(
                         JobModel.status.not_in(JobStatus.finished_statuses()),
                         JobModel.last_processed_at <= now - self._min_processing_interval,
@@ -213,10 +214,13 @@ class JobFetcher:
                             JobModel.lock_expires_at < now,
                         ),
                         JobModel.lock_owner.in_([None, self.__class__.__name__]),
+                        # Do not try to lock jobs if the run is being locked so that
+                        # the run pipeline is guaranteed to lock all the jobs eventually.
+                        RunModel.lock_expires_at.is_(None),
                     )
                     .order_by(JobModel.priority.desc(), JobModel.last_processed_at.asc())
                     .limit(limit)
-                    .with_for_update(skip_locked=True, key_share=True)
+                    .with_for_update(of=JobModel, skip_locked=True, key_share=True)
                     .options(load_only(JobModel.id, JobModel.lock_token, JobModel.lock_expires_at))
                 )
                 job_models = list(res.scalars().all())
