@@ -2,15 +2,16 @@ import asyncio
 import math
 import random
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol, cast
 
 from sqlalchemy import and_, or_, select, update
-from sqlalchemy.orm import load_only
+from sqlalchemy.orm import load_only, selectinload
 
 from dbqueue_poc.db import get_db, get_session_ctx
-from dbqueue_poc.models import RunModel
-from dbqueue_poc.schemas import RunStatus
+from dbqueue_poc.models import JobModel, RunModel
+from dbqueue_poc.schemas import JobStatus, RunStatus
 from dbqueue_poc.services.locking import get_locker
 from dbqueue_poc.utils.common import get_current_datetime
 from dbqueue_poc.utils.logging import get_logger
@@ -22,6 +23,11 @@ class PipelineItem(Protocol):
     id: uuid.UUID
     lock_expires_at: datetime
     lock_token: uuid.UUID
+
+
+@dataclass
+class ProcessingResult:
+    requeue: bool
 
 
 class RunPipeline:
@@ -241,19 +247,32 @@ class RunWorker:
     async def start(self):
         while True:
             item = await self._queue.get()
+            requeue = False
             try:
-                await self.process(item)
+                processing_result = await self.process(item)
+                requeue = processing_result.requeue
             except Exception:
                 logger.exception("Unexpected exception when processing item")
-            await self._heartbeater.untrack(item)
+            if requeue:
+                # Requeue mechanism allows workers to process the item later while keeping it locked,
+                # e.g. to wait for related resources to be unlocked.
+                await self._queue.put(item)
+            else:
+                await self._heartbeater.untrack(item)
 
-    async def process(self, item: PipelineItem):
+    async def process(self, item: PipelineItem) -> ProcessingResult:
         logger.debug("Processing run %s", item.id)
         async with get_session_ctx() as session:
             res = await session.execute(
-                select(RunModel).where(
+                select(RunModel)
+                .where(
                     RunModel.id == item.id,
                     RunModel.lock_token == item.lock_token,
+                )
+                .options(
+                    selectinload(
+                        RunModel.jobs.and_(JobModel.status.not_in(JobStatus.finished_statuses()))
+                    )
                 )
             )
             run_model = res.scalar_one_or_none()
@@ -262,7 +281,33 @@ class RunWorker:
                     "Failed to process run: lock_token mismatch."
                     " The run is expected to be processed and updated on another fetch iteration."
                 )
-                return
+                return ProcessingResult(requeue=False)
+
+            res = await session.execute(
+                select(JobModel)
+                .where(
+                    JobModel.run_id == item.id,
+                    JobModel.status.not_in(JobStatus.finished_statuses()),
+                    or_(
+                        JobModel.lock_expires_at.is_(None),
+                        JobModel.lock_expires_at < get_current_datetime(),
+                    ),
+                    JobModel.lock_owner.in_([None, self.__class__.__name__]),
+                )
+                .with_for_update(key_share=True)
+            )
+            locked_job_models = res.scalars().all()
+            if len(run_model.jobs) != len(locked_job_models):
+                logger.debug(
+                    "Failed to lock run %s jobs. The run will be requeued and processed later.",
+                    run_model.id,
+                )
+                return ProcessingResult(requeue=True)
+            for job_model in locked_job_models:
+                job_model.lock_expires_at = run_model.lock_expires_at
+                run_model.lock_token = run_model.lock_token
+                run_model.lock_owner = self.__class__.__name__
+            await session.commit()
 
         # Do some work ...
         await asyncio.sleep(30)
@@ -287,5 +332,6 @@ class RunWorker:
                     "Failed to update the run after processing: lock_token changed."
                     " The run is expected to be processed and updated on another fetch iteration."
                 )
-                return
+                return ProcessingResult(requeue=False)
         logger.debug("Processed run %s", item.id)
+        return ProcessingResult(requeue=False)
