@@ -8,7 +8,7 @@ from typing import cast
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import load_only
 
-from dbqueue_poc.background.pipeline_tasks.base import PipelineItem, ProcessingResult
+from dbqueue_poc.background.pipeline_tasks.base import PipelineItem
 from dbqueue_poc.db import get_db, get_session_ctx
 from dbqueue_poc.models import JobModel, RunModel
 from dbqueue_poc.schemas import JobStatus
@@ -260,20 +260,13 @@ class JobWorker:
     async def start(self):
         while True:
             item = await self._queue.get()
-            requeue = False
             try:
-                processing_result = await self.process(item)
-                requeue = processing_result.requeue
+                await self.process(item)
             except Exception:
                 logger.exception("Unexpected exception when processing item")
-            if requeue:
-                # Requeue mechanism allows workers to process the item later while keeping it locked,
-                # e.g. to wait for related resources to be unlocked.
-                await self._queue.put(item)
-            else:
-                await self._heartbeater.untrack(item)
+            await self._heartbeater.untrack(item)
 
-    async def process(self, item: PipelineItem) -> ProcessingResult:
+    async def process(self, item: PipelineItem):
         logger.debug("Processing job %s", item.id)
         async with get_session_ctx() as session:
             res = await session.execute(
@@ -288,7 +281,7 @@ class JobWorker:
                     "Failed to process job: lock_token mismatch."
                     " The job is expected to be processed and updated on another fetch iteration."
                 )
-                return ProcessingResult(requeue=False)
+                return
 
         # Do some work ...
         await asyncio.sleep(30)
@@ -313,6 +306,5 @@ class JobWorker:
                     "Failed to update the job after processing: lock_token changed."
                     " The job is expected to be processed and updated on another fetch iteration."
                 )
-                return ProcessingResult(requeue=False)
+                return
         logger.debug("Processed job %s", item.id)
-        return ProcessingResult(requeue=False)
