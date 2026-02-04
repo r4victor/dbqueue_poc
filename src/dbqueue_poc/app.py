@@ -52,20 +52,23 @@ def register_routes(app: FastAPI, ui: bool = True):
         body: CreateRunRequest,
         session: AsyncSession = Depends(get_session),
     ):
-        await runs.create_run(session=session, create_run_request=body)
+        run_id = await runs.create_run(session=session, create_run_request=body)
+        return {"id": run_id}
 
     @app.post("/jobs/create")
     async def create_job(
         body: CreateJobRequest,
         session: AsyncSession = Depends(get_session),
     ):
-        await jobs.create_job(session=session, create_job_request=body)
+        job_id = await jobs.create_job(session=session, create_job_request=body)
+        return {"id": job_id}
 
     @app.post("/placement-groups/create")
     async def create_placement_group(
         body: CreatePlacementGroupRequest,
         session: AsyncSession = Depends(get_session),
     ):
-        await placement_groups.create_placement_group(
+        placement_group_id = await placement_groups.create_placement_group(
             session=session, create_placement_group_request=body
         )
+        return {"id": placement_group_id}

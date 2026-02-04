@@ -34,7 +34,7 @@ class JobPipeline:
 
     def __init__(
         self,
-        workers_num: int = 25,
+        workers_num: int = 50,
         queue_lower_limit_factor: float = 0.5,
         queue_upper_limit_factor: float = 2.0,
         min_processing_interval: timedelta = timedelta(seconds=5),
