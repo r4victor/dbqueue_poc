@@ -308,10 +308,12 @@ class RunWorker:
             locked_job_models = res.scalars().all()
             if len(run_model.jobs) != len(locked_job_models):
                 logger.debug(
-                    "Failed to lock run %s jobs. The run will be requeued and processed later.",
+                    "Failed to lock run %s jobs. The run will be processed later.",
                     run_model.id,
                 )
                 now = get_current_datetime()
+                # Keep the item locked but reset `lock_expires_at` to allow the pipeline
+                # to process the item again ASAP (after `min_processing_interval`).
                 res = await session.execute(
                     update(RunModel)
                     .where(
