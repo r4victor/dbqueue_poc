@@ -2,6 +2,7 @@ import asyncio
 import math
 import random
 import uuid
+from asyncio.queues import QueueEmpty
 from datetime import timedelta
 from typing import cast
 
@@ -38,6 +39,7 @@ class RunPipeline:
         workers_num: int = 25,
         queue_lower_limit_factor: float = 0.5,
         queue_upper_limit_factor: float = 2.0,
+        requeue_upper_limit_factor: float = 1.0,
         min_processing_interval: timedelta = timedelta(seconds=5),
         lock_timeout: timedelta = timedelta(seconds=20),
         heartbeat_trigger: timedelta = timedelta(seconds=10),
@@ -45,12 +47,15 @@ class RunPipeline:
         self._workers_num = workers_num
         self._queue_lower_limit_factor = queue_lower_limit_factor
         self._queue_upper_limit_factor = queue_upper_limit_factor
+        self._requeue_upper_limit_factor = requeue_upper_limit_factor
         self._queue_desired_minsize = math.ceil(workers_num * queue_lower_limit_factor)
         self._queue_maxsize = math.ceil(workers_num * queue_upper_limit_factor)
+        self._requeue_maxsize = math.ceil(workers_num * requeue_upper_limit_factor)
         self._min_processing_interval = min_processing_interval
         self._lock_timeout = lock_timeout
         self._heartbeat_trigger = heartbeat_trigger
         self._queue = asyncio.Queue[PipelineItem](maxsize=self._queue_maxsize)
+        self._requeue = asyncio.Queue[PipelineItem](maxsize=self._requeue_maxsize)
         self._heartbeater = RunHeartbeater(
             lock_timeout=self._lock_timeout,
             heartbeat_trigger=self._heartbeat_trigger,
@@ -58,13 +63,16 @@ class RunPipeline:
         self._fetcher = RunFetcher(
             queue=self._queue,
             queue_desired_minsize=self._queue_desired_minsize,
-            queue_maxsize=self._queue_maxsize,
             min_processing_interval=self._min_processing_interval,
             lock_timeout=self._lock_timeout,
             heartbeater=self._heartbeater,
         )
         self._workers = [
-            RunWorker(queue=self._queue, heartbeater=self._heartbeater)
+            RunWorker(
+                queue=self._queue,
+                requeue=self._requeue,
+                heartbeater=self._heartbeater,
+            )
             for _ in range(self._workers_num)
         ]
 
@@ -159,7 +167,6 @@ class RunFetcher:
         self,
         queue: asyncio.Queue[PipelineItem],
         queue_desired_minsize: int,
-        queue_maxsize: int,
         min_processing_interval: timedelta,
         lock_timeout: timedelta,
         heartbeater: RunHeartbeater,
@@ -167,7 +174,6 @@ class RunFetcher:
     ) -> None:
         self._queue = queue
         self._queue_desired_minsize = queue_desired_minsize
-        self._queue_maxsize = queue_maxsize
         self._min_processing_interval = min_processing_interval
         self._lock_timeout = lock_timeout
         self._heartbeater = heartbeater
@@ -181,7 +187,7 @@ class RunFetcher:
             if self._queue.qsize() >= self._queue_desired_minsize:
                 await asyncio.sleep(self._queue_check_delay)
                 continue
-            fetch_limit = self._queue_maxsize - self._queue.qsize()
+            fetch_limit = self._queue.maxsize - self._queue.qsize()
             try:
                 items = await self.fetch(limit=fetch_limit)
             except Exception:
@@ -244,14 +250,23 @@ class RunWorker:
     def __init__(
         self,
         queue: asyncio.Queue[PipelineItem],
+        requeue: asyncio.Queue[PipelineItem],
         heartbeater: RunHeartbeater,
+        queue_check_delay: float = 0.1,
     ) -> None:
         self._queue = queue
+        self._requeue = requeue
         self._heartbeater = heartbeater
+        self._queue_check_delay = queue_check_delay
 
     async def start(self):
         while True:
-            item = await self._queue.get()
+            queue = random.choice([self._queue, self._requeue])
+            try:
+                item = queue.get_nowait()
+            except QueueEmpty:
+                await asyncio.sleep(self._queue_check_delay)
+                continue
             requeue = False
             try:
                 processing_result = await self.process(item)
@@ -261,9 +276,33 @@ class RunWorker:
             if requeue:
                 # Requeue mechanism allows workers to process the item later while keeping it locked,
                 # e.g. to wait for related resources to be unlocked.
-                await self._queue.put(item)
-            else:
-                await self._heartbeater.untrack(item)
+                try:
+                    self._requeue.put_nowait(item)
+                    continue
+                except asyncio.QueueFull:
+                    await self.unlock(item)
+            await self._heartbeater.untrack(item)
+
+    async def unlock(self, item: PipelineItem):
+        async with get_session_ctx() as session:
+            res = await session.execute(
+                update(RunModel)
+                .where(
+                    RunModel.id == item.id,
+                    RunModel.lock_token == item.lock_token,
+                )
+                .values(
+                    lock_expires_at=None,
+                    lock_token=None,
+                    lock_owner=None,
+                    last_processed_at=get_current_datetime(),
+                )
+            )
+            if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
+                logger.warning(
+                    "Failed to unlock the run: lock_token changed."
+                    " The run is expected to be processed and updated on another fetch iteration."
+                )
 
     async def process(self, item: PipelineItem) -> ProcessingResult:
         logger.debug("Processing run %s", item.id)
