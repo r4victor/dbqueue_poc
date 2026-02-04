@@ -224,8 +224,7 @@ class JobFetcher:
                         # take longer time and not indefinite unlike running.
                         or_(
                             JobModel.status != JobStatus.RUNNING,
-                            RunModel.lock_expires_at.is_(None),
-                            RunModel.lock_expires_at < now,
+                            RunModel.lock_owner.is_(None),
                         ),
                     )
                     .order_by(JobModel.priority.desc(), JobModel.last_processed_at.asc())

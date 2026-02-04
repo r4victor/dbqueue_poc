@@ -312,8 +312,9 @@ class RunWorker:
                     run_model.id,
                 )
                 now = get_current_datetime()
-                # Keep the item locked but reset `lock_expires_at` to allow the pipeline
-                # to process the item again ASAP (after `min_processing_interval`).
+                # Keep `lock_owner` so that `JobPipeline` sees that the run is being locked
+                # but reset `lock_expires_at` to process the item again ASAP (after `min_processing_interval`).
+                # Reset `lock_token` so that heartbeater can no longer update the item.
                 res = await session.execute(
                     update(RunModel)
                     .where(
@@ -322,6 +323,7 @@ class RunWorker:
                     )
                     .values(
                         lock_expires_at=now,
+                        lock_token=None,
                         last_processed_at=now,
                     )
                 )
