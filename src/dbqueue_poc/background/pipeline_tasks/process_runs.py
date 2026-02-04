@@ -10,7 +10,6 @@ from sqlalchemy.orm import load_only, selectinload
 
 from dbqueue_poc.background.pipeline_tasks.base import (
     PipelineItem,
-    ProcessingResult,
 )
 from dbqueue_poc.db import get_db, get_session_ctx
 from dbqueue_poc.models import JobModel, RunModel
@@ -30,8 +29,8 @@ class RunPipeline:
     Highlights:
         * All features of the simplest pipeline (`PlacementGroupPipeline`), plus
         * Workers lock all related items (`JobModel`). If not all items can be locked, the run is requeued:
-          it's kept locked in the DB but not heartbeated. This allows signaling
-          other pipelines that the item is locked and process it later via regular pipeline path.
+          it's kept in the DB with `lock_owner`, `lock_expires_at` and `lock_token` reset, and not heartbeated.
+          This allows signaling other pipelines that the item is locked and process it later via regular pipeline path.
         * Heartbeating related items is not needed. Stale locked related items can be
           processed only by the same pipeline (due to `lock_owner` check) so they'll be picked up
           when processing the main item again.
@@ -139,8 +138,9 @@ class RunHeartbeater:
                 .values(lock_expires_at=now + self._lock_timeout)
             )
             if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
-                logger.warning(
+                logger.debug(
                     "Failed to update lock_expires_at: lock_token changed."
+                    " This may happen due to requeue."
                     " The run is expected to be processed and updated on another fetch iteration."
                 )
                 return
