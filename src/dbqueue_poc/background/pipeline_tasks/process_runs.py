@@ -20,6 +20,19 @@ logger = get_logger(__name__)
 
 
 class RunPipeline:
+    """
+    An example of a pipeline that needs to lock and update the main resource type (`RunModel`)
+    and related resource types (`JobModel`).
+
+    Highlights:
+        * All features of the simplest pipeline (`PlacementGroupPipeline`), plus
+        * Workers lock all related items (`JobModel`). If not all items can be locked,
+          then the run is requeued (put back in the queue).
+        * Heartbeating related items is not needed. Stale locked related items can be
+          processed only by the same pipeline (due to `lock_owner` check) so they'll be picked up
+          when processing the main item again.
+    """
+
     def __init__(
         self,
         workers_num: int = 25,

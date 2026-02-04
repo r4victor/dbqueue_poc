@@ -42,10 +42,27 @@ class JobStatus(str, Enum):
         return self in self.finished_statuses()
 
 
+class PlacementGroupStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    TERMINATING = "terminating"
+    TERMINATED = "terminated"
+
+    @classmethod
+    def finished_statuses(cls) -> list["PlacementGroupStatus"]:
+        return [cls.TERMINATED]
+
+    def is_finished(self):
+        return self in self.finished_statuses()
+
+
 class CreateRunRequest(BaseModel):
     name: Optional[str] = None
 
 
 class CreateJobRequest(BaseModel):
     run_id: uuid.UUID
+    name: Optional[str] = None
+
+
+class CreatePlacementGroupRequest(BaseModel):
     name: Optional[str] = None

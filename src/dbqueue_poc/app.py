@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dbqueue_poc.background.pipeline_tasks import start_pipeline_tasks
 from dbqueue_poc.background.scheduled_tasks import start_scheduled_tasks
 from dbqueue_poc.db import get_db, get_session, migrate
-from dbqueue_poc.schemas import CreateJobRequest, CreateRunRequest
-from dbqueue_poc.services import jobs, runs
+from dbqueue_poc.schemas import CreateJobRequest, CreatePlacementGroupRequest, CreateRunRequest
+from dbqueue_poc.services import jobs, placement_groups, runs
 from dbqueue_poc.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -60,3 +60,12 @@ def register_routes(app: FastAPI, ui: bool = True):
         session: AsyncSession = Depends(get_session),
     ):
         await jobs.create_job(session=session, create_job_request=body)
+
+    @app.post("/placement-groups/create")
+    async def create_placement_group(
+        body: CreatePlacementGroupRequest,
+        session: AsyncSession = Depends(get_session),
+    ):
+        await placement_groups.create_placement_group(
+            session=session, create_placement_group_request=body
+        )

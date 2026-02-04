@@ -17,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy_utils import UUIDType
 
-from dbqueue_poc.schemas import JobStatus, RunStatus
+from dbqueue_poc.schemas import JobStatus, PlacementGroupStatus, RunStatus
 from dbqueue_poc.utils.common import get_current_datetime
 
 
@@ -150,6 +150,28 @@ class JobModel(BaseModel):
     lock_owner: Mapped[Optional[str]] = mapped_column(String(100))
 
     priority: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class PlacementGroupModel(BaseModel):
+    __tablename__ = "placement_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType(binary=False), primary_key=True, default=uuid.uuid4
+    )
+
+    name: Mapped[str] = mapped_column(String(100))
+    submitted_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    last_processed_at: Mapped[datetime] = mapped_column(
+        NaiveDateTime, default=get_current_datetime
+    )
+    status: Mapped[PlacementGroupStatus] = mapped_column(
+        EnumAsString(PlacementGroupStatus, 100), index=True
+    )
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    lock_expires_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime)
+    lock_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUIDType(binary=False))
+    lock_owner: Mapped[Optional[str]] = mapped_column(String(100))
 
 
 class EventModel(BaseModel):

@@ -1,10 +1,13 @@
 from dbqueue_poc.background.pipeline_tasks.process_jobs import JobPipeline
+from dbqueue_poc.background.pipeline_tasks.process_placement_groups import (
+    PlacementGroupPipeline,
+)
 from dbqueue_poc.background.pipeline_tasks.process_runs import RunPipeline
 
 
 class PipelineManager:
     def __init__(self) -> None:
-        self._pipelines = [RunPipeline(), JobPipeline()]
+        self._pipelines = [RunPipeline(), JobPipeline(), PlacementGroupPipeline()]
 
     def start(self):
         for pipeline in self._pipelines:
