@@ -13,3 +13,4 @@ wheels/
 
 # App-specific
 /.state/
+/my/
