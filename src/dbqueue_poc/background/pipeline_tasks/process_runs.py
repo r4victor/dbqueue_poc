@@ -288,8 +288,10 @@ class RunWorker:
         async with get_session_ctx() as session:
             # This is an example of how a pipeline can lock related resources.
             # The worker either successfully locks all the related resources or requeues the main resource.
-            # While the main resource is locked, related resources cannot be locked by their pipelines.
-            # This guarantees that the pipeline processing the main resource can acquire all locks eventually.
+            # While the main resource is locked, other pipelines may choose not to lock to related resources
+            # so that the main resource can acquire all locks eventually.
+            # Note: this is the worst case example of always pre-locking.
+            # The optimal processing would lock related resource only when necessary.
             res = await session.execute(
                 select(RunModel)
                 .where(
