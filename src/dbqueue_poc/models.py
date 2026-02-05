@@ -122,7 +122,25 @@ class RunModel(BaseModel):
 
     jobs: Mapped[List["JobModel"]] = relationship(back_populates="run")
 
-    __table_args__ = (Index("ix_submitted_at_id", submitted_at.desc(), id),)
+    _finished_statuses = tuple(RunStatus.finished_statuses())
+    __table_args__ = (
+        Index(
+            "ix_runs_schedule_q",
+            priority.desc(),
+            last_processed_at.asc(),
+            id,
+            postgresql_where=status.not_in(_finished_statuses),
+            sqlite_where=status.not_in(_finished_statuses),
+        ),
+        Index(
+            "ix_runs_lock_expires_q",
+            lock_expires_at.asc(),
+            lock_owner,
+            id,
+            postgresql_where=status.not_in(_finished_statuses),
+            sqlite_where=status.not_in(_finished_statuses),
+        ),
+    )
 
 
 class JobModel(BaseModel):
@@ -151,6 +169,26 @@ class JobModel(BaseModel):
 
     priority: Mapped[int] = mapped_column(Integer, default=0)
 
+    _finished_statuses = tuple(JobStatus.finished_statuses())
+    __table_args__ = (
+        Index(
+            "ix_jobs_schedule_q",
+            priority.desc(),
+            last_processed_at.asc(),
+            id,
+            postgresql_where=status.not_in(_finished_statuses),
+            sqlite_where=status.not_in(_finished_statuses),
+        ),
+        Index(
+            "ix_jobs_lock_expires_q",
+            lock_expires_at.asc(),
+            lock_owner,
+            id,
+            postgresql_where=status.not_in(_finished_statuses),
+            sqlite_where=status.not_in(_finished_statuses),
+        ),
+    )
+
 
 class PlacementGroupModel(BaseModel):
     __tablename__ = "placement_groups"
@@ -172,6 +210,25 @@ class PlacementGroupModel(BaseModel):
     lock_expires_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime)
     lock_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUIDType(binary=False))
     lock_owner: Mapped[Optional[str]] = mapped_column(String(100))
+
+    _finished_statuses = tuple(PlacementGroupStatus.finished_statuses())
+    __table_args__ = (
+        Index(
+            "ix_placement_groups_schedule_q",
+            last_processed_at.asc(),
+            id,
+            postgresql_where=status.not_in(_finished_statuses),
+            sqlite_where=status.not_in(_finished_statuses),
+        ),
+        Index(
+            "ix_placement_groups_lock_expires_q",
+            lock_expires_at.asc(),
+            lock_owner,
+            id,
+            postgresql_where=status.not_in(_finished_statuses),
+            sqlite_where=status.not_in(_finished_statuses),
+        ),
+    )
 
 
 class EventModel(BaseModel):
