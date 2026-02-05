@@ -216,8 +216,8 @@ class JobFetcher:
 
     async def fetch(self, limit: int) -> list[PipelineItem]:
         job_lock, _ = get_locker(get_db().dialect_name).get_lockset(JobModel.__tablename__)
-        async with get_session_ctx() as session:
-            async with job_lock:
+        async with job_lock:
+            async with get_session_ctx() as session:
                 now = get_current_datetime()
                 res = await session.execute(
                     select(JobModel)

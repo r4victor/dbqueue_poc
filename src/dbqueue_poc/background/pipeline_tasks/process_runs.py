@@ -224,8 +224,8 @@ class RunFetcher:
 
     async def fetch(self, limit: int) -> list[PipelineItem]:
         run_lock, _ = get_locker(get_db().dialect_name).get_lockset(RunModel.__tablename__)
-        async with get_session_ctx() as session:
-            async with run_lock:
+        async with run_lock:
+            async with get_session_ctx() as session:
                 now = get_current_datetime()
                 res = await session.execute(
                     select(RunModel)
@@ -285,84 +285,88 @@ class RunWorker:
 
     async def process(self, item: PipelineItem):
         logger.debug("Processing run %s", item.id)
-        async with get_session_ctx() as session:
-            # This is an example of how a pipeline can lock related resources.
-            # The worker either successfully locks all the related resources or requeues the main resource.
-            # While the main resource is locked, other pipelines may choose not to lock to related resources
-            # so that the main resource can acquire all locks eventually.
-            # Note: this is the worst case example of always pre-locking.
-            # The optimal processing would lock related resource only when necessary.
-            res = await session.execute(
-                select(RunModel)
-                .where(
-                    RunModel.id == item.id,
-                    RunModel.lock_token == item.lock_token,
-                )
-                .options(
-                    selectinload(
-                        RunModel.jobs.and_(JobModel.status.not_in(JobStatus.finished_statuses()))
-                    )
-                )
-            )
-            run_model = res.scalar_one_or_none()
-            if run_model is None:
-                logger.warning(
-                    "Failed to process run: lock_token mismatch."
-                    " The run is expected to be processed and updated on another fetch iteration."
-                )
-                return
-
-            res = await session.execute(
-                select(JobModel)
-                .where(
-                    JobModel.run_id == item.id,
-                    JobModel.status.not_in(JobStatus.finished_statuses()),
-                    or_(
-                        JobModel.lock_expires_at.is_(None),
-                        JobModel.lock_expires_at < get_current_datetime(),
-                    ),
-                    or_(
-                        JobModel.lock_owner.is_(None),
-                        JobModel.lock_owner == RunPipeline.__name__,
-                    ),
-                )
-                .with_for_update(skip_locked=True, key_share=True)
-            )
-            locked_job_models = res.scalars().all()
-            if len(run_model.jobs) != len(locked_job_models):
-                logger.debug(
-                    "Failed to lock run %s jobs. The run will be processed later.",
-                    run_model.id,
-                )
-                now = get_current_datetime()
-                # Keep `lock_owner` so that `JobPipeline` sees that the run is being locked
-                # but reset `lock_expires_at` to process the item again ASAP (after `min_processing_interval`).
-                # Reset `lock_token` so that heartbeater can no longer update the item.
+        job_lock, _ = get_locker(get_db().dialect_name).get_lockset(JobModel.__tablename__)
+        async with job_lock:
+            async with get_session_ctx() as session:
+                # This is an example of how a pipeline can lock related resources.
+                # The worker either successfully locks all the related resources or requeues the main resource.
+                # While the main resource is locked, other pipelines may choose not to lock to related resources
+                # so that the main resource can acquire all locks eventually.
+                # Note: this is the worst case example of always pre-locking.
+                # The optimal processing would lock related resource only when necessary.
                 res = await session.execute(
-                    update(RunModel)
+                    select(RunModel)
                     .where(
-                        RunModel.id == run_model.id,
-                        RunModel.lock_token == run_model.lock_token,
+                        RunModel.id == item.id,
+                        RunModel.lock_token == item.lock_token,
                     )
-                    .values(
-                        lock_expires_at=now,
-                        lock_token=None,
-                        last_processed_at=now,
+                    .options(
+                        selectinload(
+                            RunModel.jobs.and_(
+                                JobModel.status.not_in(JobStatus.finished_statuses())
+                            )
+                        )
                     )
                 )
-                if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
+                run_model = res.scalar_one_or_none()
+                if run_model is None:
                     logger.warning(
-                        "Failed to reset lock_expires_at: lock_token changed."
+                        "Failed to process run: lock_token mismatch."
                         " The run is expected to be processed and updated on another fetch iteration."
                     )
                     return
-                return
 
-            for job_model in locked_job_models:
-                job_model.lock_expires_at = run_model.lock_expires_at
-                job_model.lock_token = run_model.lock_token
-                job_model.lock_owner = RunPipeline.__name__
-            await session.commit()
+                res = await session.execute(
+                    select(JobModel)
+                    .where(
+                        JobModel.run_id == item.id,
+                        JobModel.status.not_in(JobStatus.finished_statuses()),
+                        or_(
+                            JobModel.lock_expires_at.is_(None),
+                            JobModel.lock_expires_at < get_current_datetime(),
+                        ),
+                        or_(
+                            JobModel.lock_owner.is_(None),
+                            JobModel.lock_owner == RunPipeline.__name__,
+                        ),
+                    )
+                    .with_for_update(skip_locked=True, key_share=True)
+                )
+                locked_job_models = res.scalars().all()
+                if len(run_model.jobs) != len(locked_job_models):
+                    logger.debug(
+                        "Failed to lock run %s jobs. The run will be processed later.",
+                        run_model.id,
+                    )
+                    now = get_current_datetime()
+                    # Keep `lock_owner` so that `JobPipeline` sees that the run is being locked
+                    # but reset `lock_expires_at` to process the item again ASAP (after `min_processing_interval`).
+                    # Reset `lock_token` so that heartbeater can no longer update the item.
+                    res = await session.execute(
+                        update(RunModel)
+                        .where(
+                            RunModel.id == run_model.id,
+                            RunModel.lock_token == run_model.lock_token,
+                        )
+                        .values(
+                            lock_expires_at=now,
+                            lock_token=None,
+                            last_processed_at=now,
+                        )
+                    )
+                    if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
+                        logger.warning(
+                            "Failed to reset lock_expires_at: lock_token changed."
+                            " The run is expected to be processed and updated on another fetch iteration."
+                        )
+                        return
+                    return
+
+                for job_model in locked_job_models:
+                    job_model.lock_expires_at = run_model.lock_expires_at
+                    job_model.lock_token = run_model.lock_token
+                    job_model.lock_owner = RunPipeline.__name__
+                await session.commit()
 
         # Do some work ...
         await asyncio.sleep(30)
@@ -387,5 +391,24 @@ class RunWorker:
                     "Failed to update the run after processing: lock_token changed."
                     " The run is expected to be processed and updated on another fetch iteration."
                 )
-                return
+            else:
+                res = await session.execute(
+                    update(JobModel)
+                    .where(
+                        JobModel.id.in_([j.id for j in run_model.jobs]),
+                        JobModel.lock_token == run_model.lock_token,
+                    )
+                    .values(
+                        lock_expires_at=None,
+                        lock_token=None,
+                        lock_owner=None,
+                        last_processed_at=get_current_datetime(),
+                    )
+                )
+                if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
+                    logger.warning(
+                        "Failed to update the jobs after processing: lock_token changed."
+                        " The jobs are expected to be processed and updated on another fetch iteration."
+                    )
+                    return
         logger.debug("Processed run %s", item.id)

@@ -227,8 +227,8 @@ class PlacementGroupFetcher:
         placement_group_lock, _ = get_locker(get_db().dialect_name).get_lockset(
             PlacementGroupModel.__tablename__
         )
-        async with get_session_ctx() as session:
-            async with placement_group_lock:
+        async with placement_group_lock:
+            async with get_session_ctx() as session:
                 now = get_current_datetime()
                 res = await session.execute(
                     select(PlacementGroupModel)
