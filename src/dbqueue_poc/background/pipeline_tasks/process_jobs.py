@@ -57,7 +57,6 @@ class JobPipeline:
         self._fetcher = JobFetcher(
             queue=self._queue,
             queue_desired_minsize=self._queue_desired_minsize,
-            queue_maxsize=self._queue_maxsize,
             min_processing_interval=self._min_processing_interval,
             lock_timeout=self._lock_timeout,
             heartbeater=self._heartbeater,
@@ -76,6 +75,13 @@ class JobPipeline:
     def shutdown(self):
         self._fetcher.shutdown()
         self._heartbeater.shutdown()
+
+    def hint_fetch(self):
+        self._fetcher.hint()
+
+    @property
+    def hint_fetch_model_name(self) -> str:
+        return JobModel.__name__
 
 
 class JobHeartbeater:
@@ -158,7 +164,6 @@ class JobFetcher:
         self,
         queue: asyncio.Queue[PipelineItem],
         queue_desired_minsize: int,
-        queue_maxsize: int,
         min_processing_interval: timedelta,
         lock_timeout: timedelta,
         heartbeater: JobHeartbeater,
@@ -166,12 +171,12 @@ class JobFetcher:
     ) -> None:
         self._queue = queue
         self._queue_desired_minsize = queue_desired_minsize
-        self._queue_maxsize = queue_maxsize
         self._min_processing_interval = min_processing_interval
         self._lock_timeout = lock_timeout
         self._heartbeater = heartbeater
         self._queue_check_delay = queue_check_delay
         self._running = False
+        self._fetch_event = asyncio.Event()
 
     async def start(self):
         self._running = True
@@ -180,15 +185,22 @@ class JobFetcher:
             if self._queue.qsize() >= self._queue_desired_minsize:
                 await asyncio.sleep(self._queue_check_delay)
                 continue
-            fetch_limit = self._queue_maxsize - self._queue.qsize()
+            fetch_limit = self._queue.maxsize - self._queue.qsize()
             try:
                 items = await self.fetch(limit=fetch_limit)
             except Exception:
                 logger.exception("Unexpected exception when fetching new items")
                 items = []
             if len(items) == 0:
-                await asyncio.sleep(self._next_fetch_delay(empty_fetch_count))
+                try:
+                    await asyncio.wait_for(
+                        self._fetch_event.wait(),
+                        timeout=self._next_fetch_delay(empty_fetch_count),
+                    )
+                except TimeoutError:
+                    pass
                 empty_fetch_count += 1
+                self._fetch_event.clear()
                 continue
             else:
                 empty_fetch_count = 0
@@ -198,6 +210,9 @@ class JobFetcher:
 
     def shutdown(self):
         self._running = False
+
+    def hint(self):
+        self._fetch_event.set()
 
     async def fetch(self, limit: int) -> list[PipelineItem]:
         job_lock, _ = get_locker(get_db().dialect_name).get_lockset(JobModel.__tablename__)
@@ -209,7 +224,10 @@ class JobFetcher:
                     .join(JobModel.run)
                     .where(
                         JobModel.status.not_in(JobStatus.finished_statuses()),
-                        JobModel.last_processed_at <= now - self._min_processing_interval,
+                        or_(
+                            JobModel.last_processed_at <= now - self._min_processing_interval,
+                            JobModel.last_processed_at == JobModel.submitted_at,
+                        ),
                         or_(
                             JobModel.lock_expires_at.is_(None),
                             JobModel.lock_expires_at < now,

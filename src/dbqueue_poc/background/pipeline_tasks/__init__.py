@@ -1,13 +1,17 @@
+from typing import Union
+
 from dbqueue_poc.background.pipeline_tasks.process_jobs import JobPipeline
 from dbqueue_poc.background.pipeline_tasks.process_placement_groups import (
     PlacementGroupPipeline,
 )
 from dbqueue_poc.background.pipeline_tasks.process_runs import RunPipeline
+from dbqueue_poc.services.pipeline import Pipeline, PipelineHinter
 
 
 class PipelineManager:
     def __init__(self) -> None:
-        self._pipelines = [RunPipeline(), JobPipeline(), PlacementGroupPipeline()]
+        self._pipelines: list[Pipeline] = [RunPipeline(), JobPipeline(), PlacementGroupPipeline()]
+        self._hinter = PipelineHinter(self._pipelines)
 
     def start(self):
         for pipeline in self._pipelines:
@@ -16,6 +20,10 @@ class PipelineManager:
     def shutdown(self):
         for pipeline in self._pipelines:
             pipeline.shutdown()
+
+    @property
+    def hinter(self):
+        return self._hinter
 
 
 def start_pipeline_tasks() -> PipelineManager:

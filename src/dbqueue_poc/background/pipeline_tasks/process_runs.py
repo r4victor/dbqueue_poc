@@ -83,6 +83,13 @@ class RunPipeline:
         self._fetcher.shutdown()
         self._heartbeater.shutdown()
 
+    def hint_fetch(self):
+        self._fetcher.hint()
+
+    @property
+    def hint_fetch_model_name(self) -> str:
+        return RunModel.__name__
+
 
 class RunHeartbeater:
     def __init__(
@@ -177,6 +184,7 @@ class RunFetcher:
         self._heartbeater = heartbeater
         self._queue_check_delay = queue_check_delay
         self._running = False
+        self._fetch_event = asyncio.Event()
 
     async def start(self):
         self._running = True
@@ -192,8 +200,15 @@ class RunFetcher:
                 logger.exception("Unexpected exception when fetching new items")
                 items = []
             if len(items) == 0:
-                await asyncio.sleep(self._next_fetch_delay(empty_fetch_count))
+                try:
+                    await asyncio.wait_for(
+                        self._fetch_event.wait(),
+                        timeout=self._next_fetch_delay(empty_fetch_count),
+                    )
+                except TimeoutError:
+                    pass
                 empty_fetch_count += 1
+                self._fetch_event.clear()
                 continue
             else:
                 empty_fetch_count = 0
@@ -204,6 +219,9 @@ class RunFetcher:
     def shutdown(self):
         self._running = False
 
+    def hint(self):
+        self._fetch_event.set()
+
     async def fetch(self, limit: int) -> list[PipelineItem]:
         run_lock, _ = get_locker(get_db().dialect_name).get_lockset(RunModel.__tablename__)
         async with get_session_ctx() as session:
@@ -213,7 +231,10 @@ class RunFetcher:
                     select(RunModel)
                     .where(
                         RunModel.status.not_in(RunStatus.finished_statuses()),
-                        RunModel.last_processed_at <= now - self._min_processing_interval,
+                        or_(
+                            RunModel.last_processed_at <= now - self._min_processing_interval,
+                            RunModel.last_processed_at == RunModel.submitted_at,
+                        ),
                         or_(
                             RunModel.lock_expires_at.is_(None),
                             RunModel.lock_expires_at < now,
