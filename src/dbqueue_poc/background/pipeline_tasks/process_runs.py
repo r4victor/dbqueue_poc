@@ -392,10 +392,11 @@ class RunWorker:
                     " The run is expected to be processed and updated on another fetch iteration."
                 )
             else:
+                job_ids = [j.id for j in run_model.jobs]
                 res = await session.execute(
                     update(JobModel)
                     .where(
-                        JobModel.id.in_([j.id for j in run_model.jobs]),
+                        JobModel.id.in_(job_ids),
                         JobModel.lock_token == run_model.lock_token,
                     )
                     .values(
@@ -405,7 +406,7 @@ class RunWorker:
                         last_processed_at=get_current_datetime(),
                     )
                 )
-                if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
+                if len(job_ids) > 0 and res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
                     logger.warning(
                         "Failed to update the jobs after processing: lock_token changed."
                         " The jobs are expected to be processed and updated on another fetch iteration."
