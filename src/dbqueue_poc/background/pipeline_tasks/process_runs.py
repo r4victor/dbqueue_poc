@@ -369,7 +369,7 @@ class RunWorker:
                 await session.commit()
 
         # Do some work ...
-        await asyncio.sleep(30)
+        await asyncio.sleep(3)
 
         async with get_session_ctx() as session:
             res = await session.execute(
