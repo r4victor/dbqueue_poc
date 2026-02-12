@@ -133,8 +133,8 @@ class Heartbeater(Generic[ModelT]):
         for item in items:
             if item.lock_expires_at < now:
                 logger.warning(
-                    "Failed to heartbeat job %s in time."
-                    " The job is expected to be processed on another fetch iteration.",
+                    "Failed to heartbeat item %s in time."
+                    " The item is expected to be processed on another fetch iteration.",
                     item.id,
                 )
                 await self.untrack(item)
@@ -142,7 +142,7 @@ class Heartbeater(Generic[ModelT]):
                 updated_items.append(item)
         if len(updated_items) == 0:
             return
-        logger.debug("Updating lock_expires_at for jobs: %s", [str(r.id) for r in updated_items])
+        logger.debug("Updating lock_expires_at for items: %s", [str(r.id) for r in updated_items])
         async with get_session_ctx() as session:
             per_item_filters = [
                 and_(
@@ -158,7 +158,7 @@ class Heartbeater(Generic[ModelT]):
             if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
                 logger.warning(
                     "Failed to update lock_expires_at: lock_token changed."
-                    " The job is expected to be processed and updated on another fetch iteration."
+                    " The item is expected to be processed and updated on another fetch iteration."
                 )
                 return
         for item in updated_items:
