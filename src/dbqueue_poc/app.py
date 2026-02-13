@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI):
     yield
     pipeline_manager.shutdown()
     scheduler.shutdown()
+    await pipeline_manager.drain()
     await get_db().engine.dispose()
     # Let checked-out DB connections close as dispose() only closes checked-in connections
     await asyncio.sleep(3)

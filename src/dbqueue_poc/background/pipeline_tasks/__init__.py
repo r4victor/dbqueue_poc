@@ -1,3 +1,5 @@
+import asyncio
+
 from dbqueue_poc.background.pipeline_tasks.base import Pipeline
 from dbqueue_poc.background.pipeline_tasks.process_jobs import JobPipeline
 from dbqueue_poc.background.pipeline_tasks.process_placement_groups import (
@@ -21,6 +23,18 @@ class PipelineManager:
     def shutdown(self):
         for pipeline in self._pipelines:
             pipeline.shutdown()
+
+    async def drain(self):
+        results = await asyncio.gather(
+            *[p.drain() for p in self._pipelines], return_exceptions=True
+        )
+        for pipeline, result in zip(self._pipelines, results):
+            if isinstance(result, BaseException):
+                logger.error(
+                    "Unexpected exception when draining pipeline %r",
+                    pipeline,
+                    exc_info=(type(result), result, result.__traceback__),
+                )
 
     @property
     def hinter(self):
