@@ -6,14 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dbqueue_poc.models import JobModel
 from dbqueue_poc.schemas import CreateJobRequest, JobStatus
-from dbqueue_poc.services.pipeline import PipelineHinter
+from dbqueue_poc.services.pipeline import PipelineHinterProtocol
 from dbqueue_poc.utils.common import get_current_datetime
 
 
 async def create_job(
     session: AsyncSession,
     create_job_request: CreateJobRequest,
-    pipeline_hinter: PipelineHinter,
+    pipeline_hinter: PipelineHinterProtocol,
 ) -> uuid.UUID:
     name = create_job_request.name
     if name is None:

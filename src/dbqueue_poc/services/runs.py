@@ -6,14 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dbqueue_poc.models import RunModel
 from dbqueue_poc.schemas import CreateRunRequest, RunStatus
-from dbqueue_poc.services.pipeline import PipelineHinter
+from dbqueue_poc.services.pipeline import PipelineHinterProtocol
 from dbqueue_poc.utils.common import get_current_datetime
 
 
 async def create_run(
     session: AsyncSession,
     create_run_request: CreateRunRequest,
-    pipeline_hinter: PipelineHinter,
+    pipeline_hinter: PipelineHinterProtocol,
 ) -> uuid.UUID:
     name = create_run_request.name
     if name is None:

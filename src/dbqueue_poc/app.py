@@ -5,12 +5,12 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dbqueue_poc.background.pipeline_tasks import start_pipeline_tasks
+from dbqueue_poc.background.pipeline_tasks import PipelineHinter, start_pipeline_tasks
 from dbqueue_poc.background.scheduled_tasks import start_scheduled_tasks
 from dbqueue_poc.db import get_db, get_session, migrate
 from dbqueue_poc.schemas import CreateJobRequest, CreatePlacementGroupRequest, CreateRunRequest
 from dbqueue_poc.services import jobs, placement_groups, runs
-from dbqueue_poc.services.pipeline import PipelineHinter
+from dbqueue_poc.services.pipeline import PipelineHinterProtocol
 from dbqueue_poc.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -40,8 +40,9 @@ async def lifespan(app: FastAPI):
     await asyncio.sleep(3)
 
 
-def get_pipeline_hinter(request: Request) -> PipelineHinter:
-    return request.app.state.pipeline_manager.hinter
+def get_pipeline_hinter(request: Request) -> PipelineHinterProtocol:
+    hinter: PipelineHinter = request.app.state.pipeline_manager.hinter
+    return hinter
 
 
 def register_routes(app: FastAPI, ui: bool = True):
@@ -57,7 +58,7 @@ def register_routes(app: FastAPI, ui: bool = True):
     async def create_run(
         body: CreateRunRequest,
         session: AsyncSession = Depends(get_session),
-        pipeline_hinter: PipelineHinter = Depends(get_pipeline_hinter),
+        pipeline_hinter: PipelineHinterProtocol = Depends(get_pipeline_hinter),
     ):
         run_id = await runs.create_run(
             session=session,
@@ -70,7 +71,7 @@ def register_routes(app: FastAPI, ui: bool = True):
     async def create_job(
         body: CreateJobRequest,
         session: AsyncSession = Depends(get_session),
-        pipeline_hinter: PipelineHinter = Depends(get_pipeline_hinter),
+        pipeline_hinter: PipelineHinterProtocol = Depends(get_pipeline_hinter),
     ):
         job_id = await jobs.create_job(
             session=session,
@@ -83,7 +84,7 @@ def register_routes(app: FastAPI, ui: bool = True):
     async def create_placement_group(
         body: CreatePlacementGroupRequest,
         session: AsyncSession = Depends(get_session),
-        pipeline_hinter: PipelineHinter = Depends(get_pipeline_hinter),
+        pipeline_hinter: PipelineHinterProtocol = Depends(get_pipeline_hinter),
     ):
         placement_group_id = await placement_groups.create_placement_group(
             session=session,

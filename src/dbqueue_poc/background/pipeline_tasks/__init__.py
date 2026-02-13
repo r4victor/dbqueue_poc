@@ -1,11 +1,12 @@
-from typing import Union
-
+from dbqueue_poc.background.pipeline_tasks.base import Pipeline
 from dbqueue_poc.background.pipeline_tasks.process_jobs import JobPipeline
 from dbqueue_poc.background.pipeline_tasks.process_placement_groups import (
     PlacementGroupPipeline,
 )
 from dbqueue_poc.background.pipeline_tasks.process_runs import RunPipeline
-from dbqueue_poc.services.pipeline import Pipeline, PipelineHinter
+from dbqueue_poc.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class PipelineManager:
@@ -24,6 +25,19 @@ class PipelineManager:
     @property
     def hinter(self):
         return self._hinter
+
+
+class PipelineHinter:
+    def __init__(self, pipelines: list[Pipeline]) -> None:
+        self._pipelines = pipelines
+        self._hint_fetch_map = {p.hint_fetch_model_name: p for p in self._pipelines}
+
+    def hint_fetch(self, model_name: str):
+        pipeline = self._hint_fetch_map.get(model_name)
+        if pipeline is None:
+            logger.warning("Model %s not registered for fetch hints", model_name)
+            return
+        pipeline.hint_fetch()
 
 
 def start_pipeline_tasks() -> PipelineManager:
