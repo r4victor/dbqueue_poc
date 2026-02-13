@@ -10,7 +10,7 @@ from dbqueue_poc.background.scheduled_tasks import start_scheduled_tasks
 from dbqueue_poc.db import get_db, get_session, migrate
 from dbqueue_poc.schemas import CreateJobRequest, CreatePlacementGroupRequest, CreateRunRequest
 from dbqueue_poc.services import jobs, placement_groups, runs
-from dbqueue_poc.services.pipeline import PipelineHinterProtocol
+from dbqueue_poc.services.pipelines import PipelineHinterProtocol
 from dbqueue_poc.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)

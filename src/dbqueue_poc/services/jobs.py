@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dbqueue_poc.models import JobModel
 from dbqueue_poc.schemas import CreateJobRequest, JobStatus
-from dbqueue_poc.services.pipeline import PipelineHinterProtocol
+from dbqueue_poc.services.pipelines import PipelineHinterProtocol
 from dbqueue_poc.utils.common import get_current_datetime
 
 
