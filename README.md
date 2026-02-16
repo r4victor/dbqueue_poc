@@ -46,3 +46,50 @@ In general, workers should be optimized to be as quick as possible to improve th
 ## TBD
 
 * Consider separating writers from workers to batch the updates to reduce the write load on the DB.
+
+## Appendix 1: DB indexes
+
+We can start with a single partial index over active resources:
+
+```python
+__table_args__ = (
+    Index(
+        "ix_runs_pipeline_fetch_q",
+        priority.desc(),
+        last_processed_at.asc(),
+        postgresql_where=status.not_in(_finished_statuses),
+        sqlite_where=status.not_in(_finished_statuses),
+    ),
+)
+```
+
+With 1,000,000 total resources and 5% active resources:
+
+```
+postgres=# EXPLAIN ANALYZE SELECT r.id
+  FROM runs AS r
+  WHERE r.status NOT IN ('TERMINATED', 'FAILED', 'DONE')
+    AND (
+      r.last_processed_at <= now() - interval '5 seconds'
+      OR r.last_processed_at = r.submitted_at
+    )
+    AND (
+      r.lock_expires_at IS NULL
+      OR r.lock_expires_at < now()
+    )
+    AND (
+      r.lock_owner IS NULL
+      OR r.lock_owner = 'RunPipeline'
+    )
+  ORDER BY r.priority DESC, r.last_processed_at ASC
+  LIMIT 100
+  FOR KEY SHARE SKIP LOCKED;
+
+ Limit  (cost=0.29..127.52 rows=100 width=34) (actual time=0.166..1.391 rows=100 loops=1)
+   ->  LockRows  (cost=0.29..64638.70 rows=50805 width=34) (actual time=0.163..1.376 rows=100 loops=1)
+         ->  Index Scan using ix_runs_pipeline_fetch_q on runs r  (cost=0.29..64130.65 rows=50805 width=34) (acual time=0.082..1.159 rows=100 loops=1)
+               Filter: (((lock_owner IS NULL) OR ((lock_owner)::text = 'RunPipeline'::text)) AND ((status)::tex <> ALL ('{TERMINATED,FAILED,DONE}'::text[])) AND ((lock_expires_at IS NULL) OR (lock_expires_at < now())) AND ((last_processed_at <= (now() - '00:00:05'::interval)) OR (last_processed_at = submitted_at)))
+               Rows Removed by Filter: 12
+ Planning Time: 0.515 ms
+ Execution Time: 1.468 ms
+```

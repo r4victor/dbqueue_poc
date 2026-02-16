@@ -128,7 +128,6 @@ class RunModel(BaseModel):
             "ix_runs_pipeline_fetch_q",
             priority.desc(),
             last_processed_at.asc(),
-            id,
             postgresql_where=status.not_in(_finished_statuses),
             sqlite_where=status.not_in(_finished_statuses),
         ),
@@ -167,7 +166,6 @@ class JobModel(BaseModel):
             "ix_jobs_pipeline_fetch_q",
             priority.desc(),
             last_processed_at.asc(),
-            id,
             postgresql_where=status.not_in(_finished_statuses),
             sqlite_where=status.not_in(_finished_statuses),
         ),
@@ -200,7 +198,6 @@ class PlacementGroupModel(BaseModel):
         Index(
             "ix_placement_groups_pipeline_fetch_q",
             last_processed_at.asc(),
-            id,
             postgresql_where=status.not_in(_finished_statuses),
             sqlite_where=status.not_in(_finished_statuses),
         ),

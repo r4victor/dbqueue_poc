@@ -3,7 +3,7 @@ import uuid
 from datetime import timedelta
 from typing import Sequence, cast
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import load_only, selectinload
 
 from dbqueue_poc.background.pipeline_tasks.base import (
