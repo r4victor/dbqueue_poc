@@ -125,17 +125,9 @@ class RunModel(BaseModel):
     _finished_statuses = tuple(RunStatus.finished_statuses())
     __table_args__ = (
         Index(
-            "ix_runs_schedule_q",
+            "ix_runs_pipeline_fetch_q",
             priority.desc(),
             last_processed_at.asc(),
-            id,
-            postgresql_where=status.not_in(_finished_statuses),
-            sqlite_where=status.not_in(_finished_statuses),
-        ),
-        Index(
-            "ix_runs_lock_expires_q",
-            lock_expires_at.asc(),
-            lock_owner,
             id,
             postgresql_where=status.not_in(_finished_statuses),
             sqlite_where=status.not_in(_finished_statuses),
@@ -172,17 +164,9 @@ class JobModel(BaseModel):
     _finished_statuses = tuple(JobStatus.finished_statuses())
     __table_args__ = (
         Index(
-            "ix_jobs_schedule_q",
+            "ix_jobs_pipeline_fetch_q",
             priority.desc(),
             last_processed_at.asc(),
-            id,
-            postgresql_where=status.not_in(_finished_statuses),
-            sqlite_where=status.not_in(_finished_statuses),
-        ),
-        Index(
-            "ix_jobs_lock_expires_q",
-            lock_expires_at.asc(),
-            lock_owner,
             id,
             postgresql_where=status.not_in(_finished_statuses),
             sqlite_where=status.not_in(_finished_statuses),
@@ -214,16 +198,8 @@ class PlacementGroupModel(BaseModel):
     _finished_statuses = tuple(PlacementGroupStatus.finished_statuses())
     __table_args__ = (
         Index(
-            "ix_placement_groups_schedule_q",
+            "ix_placement_groups_pipeline_fetch_q",
             last_processed_at.asc(),
-            id,
-            postgresql_where=status.not_in(_finished_statuses),
-            sqlite_where=status.not_in(_finished_statuses),
-        ),
-        Index(
-            "ix_placement_groups_lock_expires_q",
-            lock_expires_at.asc(),
-            lock_owner,
             id,
             postgresql_where=status.not_in(_finished_statuses),
             sqlite_where=status.not_in(_finished_statuses),
