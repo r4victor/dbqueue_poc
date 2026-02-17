@@ -165,7 +165,6 @@ class JobWorker(Worker):
         )
 
     async def process(self, item: PipelineItem):
-        logger.debug("Processing job %s", item.id)
         async with get_session_ctx() as session:
             res = await session.execute(
                 select(JobModel).where(
@@ -176,8 +175,10 @@ class JobWorker(Worker):
             job_model = res.scalar_one_or_none()
             if job_model is None:
                 logger.warning(
-                    "Failed to process job: lock_token mismatch."
-                    " The job is expected to be processed and updated on another fetch iteration."
+                    "Failed to process %s item %s: lock_token mismatch."
+                    " The item is expected to be processed and updated on another fetch iteration.",
+                    item.__tablename__,
+                    item.id,
                 )
                 return
 
@@ -198,11 +199,13 @@ class JobWorker(Worker):
                     last_processed_at=get_current_datetime(),
                     status=JobStatus.DONE,
                 )
+                .returning(JobModel.id)
             )
-            if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
+            updated_ids = list(res.scalars().all())
+            if len(updated_ids) == 0:
                 logger.warning(
-                    "Failed to update the job after processing: lock_token changed."
-                    " The job is expected to be processed and updated on another fetch iteration."
+                    "Failed to update %s item %s after processing: lock_token changed."
+                    " The item is expected to be processed and updated on another fetch iteration.",
+                    item.__tablename__,
+                    item.id,
                 )
-                return
-        logger.debug("Processed job %s", item.id)

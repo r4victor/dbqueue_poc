@@ -172,7 +172,6 @@ class PlacementGroupWorker(Worker):
         )
 
     async def process(self, item: PipelineItem):
-        logger.debug("Processing placement group %s", item.id)
         async with get_session_ctx() as session:
             res = await session.execute(
                 select(PlacementGroupModel).where(
@@ -180,11 +179,13 @@ class PlacementGroupWorker(Worker):
                     PlacementGroupModel.lock_token == item.lock_token,
                 )
             )
-            placement_group_model = res.scalar_one_or_none()
+            placement_group_model = res.unique().scalar_one_or_none()
             if placement_group_model is None:
                 logger.warning(
-                    "Failed to process placement group: lock_token mismatch."
-                    " The placement group is expected to be processed and updated on another fetch iteration."
+                    "Failed to process %s item %s: lock_token mismatch."
+                    " The item is expected to be processed and updated on another fetch iteration.",
+                    item.__tablename__,
+                    item.id,
                 )
                 return
 
@@ -205,11 +206,13 @@ class PlacementGroupWorker(Worker):
                     last_processed_at=get_current_datetime(),
                     status=PlacementGroupStatus.TERMINATED,
                 )
+                .returning(PlacementGroupModel.id)
             )
-            if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
+            updated_ids = list(res.scalars().all())
+            if len(updated_ids) == 0:
                 logger.warning(
-                    "Failed to update the placement group after processing: lock_token changed."
-                    " The placement group is expected to be processed and updated on another fetch iteration."
+                    "Failed to update %s item %s after processing: lock_token changed."
+                    " The item is expected to be processed and updated on another fetch iteration.",
+                    item.__tablename__,
+                    item.id,
                 )
-                return
-        logger.debug("Processed placement group %s", item.id)

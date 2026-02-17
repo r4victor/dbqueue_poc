@@ -161,7 +161,6 @@ class RunWorker(Worker):
         )
 
     async def process(self, item: PipelineItem):
-        logger.debug("Processing run %s", item.id)
         job_lock, _ = get_locker(get_db().dialect_name).get_lockset(JobModel.__tablename__)
         async with job_lock:
             async with get_session_ctx() as session:
@@ -188,8 +187,10 @@ class RunWorker(Worker):
                 run_model = res.scalar_one_or_none()
                 if run_model is None:
                     logger.warning(
-                        "Failed to process run: lock_token mismatch."
-                        " The run is expected to be processed and updated on another fetch iteration."
+                        "Failed to process %s item %s: lock_token mismatch."
+                        " The item is expected to be processed and updated on another fetch iteration.",
+                        item.__tablename__,
+                        item.id,
                     )
                     return
 
@@ -262,11 +263,15 @@ class RunWorker(Worker):
                     last_processed_at=get_current_datetime(),
                     status=RunStatus.DONE,
                 )
+                .returning(RunModel.id)
             )
-            if res.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue]
+            updated_ids = list(res.scalars().all())
+            if len(updated_ids) == 0:
                 logger.warning(
-                    "Failed to update the run after processing: lock_token changed."
-                    " The run is expected to be processed and updated on another fetch iteration."
+                    "Failed to update %s item %s after processing: lock_token changed."
+                    " The item is expected to be processed and updated on another fetch iteration.",
+                    item.__tablename__,
+                    item.id,
                 )
             else:
                 job_ids = [j.id for j in run_model.jobs]
@@ -289,4 +294,3 @@ class RunWorker(Worker):
                         " The jobs are expected to be processed and updated on another fetch iteration."
                     )
                     return
-        logger.debug("Processed run %s", item.id)
